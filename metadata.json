@@ -1,0 +1,8 @@
+{
+  "name": "IdentityGuard",
+  "description": "Secure digital alias generator with hardware-level local encryption simulation and advanced AI security assistant.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ]
+}
