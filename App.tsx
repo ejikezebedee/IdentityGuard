@@ -1,360 +1,364 @@
-
-import React, { useState } from 'react';
-import { AppView, Alias, UserState } from './types';
+import React, { useMemo, useState } from 'react';
+import { AppView, Alias, RiskReport, UserState, VaultSession } from './types';
 import { ICONS } from './constants';
 import { cryptoService } from './services/cryptoService';
 import { geminiService } from './services/geminiService';
+import { vaultService } from './services/vaultService';
+
+const emptyReport: RiskReport = {
+  summary: 'Generate an alias to see a local risk briefing.',
+  score: 0,
+  findings: [],
+  recommendations: [],
+};
 
 const App: React.FC = () => {
   const [currentView, setCurrentView] = useState<AppView>(AppView.AUTH);
+  const [session, setSession] = useState<VaultSession | null>(null);
+  const [passphrase, setPassphrase] = useState('');
+  const [unlockError, setUnlockError] = useState('');
   const [userState, setUserState] = useState<UserState>({
     isLocked: true,
-    hasHardwareKey: true,
-    aliasHistory: []
+    vaultReady: false,
+    aliasHistory: [],
   });
 
-  // Identity Input States
   const [inputContext, setInputContext] = useState('');
   const [inputName, setInputName] = useState('');
   const [inputDOB, setInputDOB] = useState('');
   const [inputAddress, setInputAddress] = useState('');
-  
   const [generatedAlias, setGeneratedAlias] = useState<Alias | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
-  const [aiResponse, setAiResponse] = useState<string>('');
+  const [riskReport, setRiskReport] = useState<RiskReport>(emptyReport);
+  const [copiedId, setCopiedId] = useState('');
 
-  const handleUnlock = () => {
-    setUserState(prev => ({ ...prev, isLocked: false }));
-    setCurrentView(AppView.DASHBOARD);
+  const activeAliases = userState.aliasHistory.filter(alias => !alias.isRevoked).length;
+  const revokedAliases = userState.aliasHistory.length - activeAliases;
+
+  const averageRisk = useMemo(() => {
+    if (!generatedAlias || riskReport.score === 0) return 0;
+    return riskReport.score;
+  }, [generatedAlias, riskReport.score]);
+
+  const handleUnlock = async () => {
+    setUnlockError('');
+    try {
+      const nextSession = await vaultService.unlock(passphrase);
+      const aliases = await vaultService.load(nextSession);
+      setSession(nextSession);
+      setUserState({ isLocked: false, vaultReady: true, aliasHistory: aliases });
+      setCurrentView(AppView.DASHBOARD);
+    } catch (error) {
+      setUnlockError(error instanceof Error ? error.message : 'Vault unlock failed.');
+    }
+  };
+
+  const persistAliases = async (aliases: Alias[]) => {
+    if (!session) return;
+    await vaultService.save(session, aliases);
+    setUserState(prev => ({ ...prev, aliasHistory: aliases }));
   };
 
   const handleGenerate = async () => {
-    if (!inputContext || !inputName || !inputDOB || !inputAddress) return;
-    
+    if (!inputContext || !inputName || !inputDOB || !inputAddress || !session) return;
+
     setIsGenerating(true);
-    setAiResponse('');
-    
     try {
-      // Core crypto generation using the full identity object
-      const aliasStr = await cryptoService.generateAlias({
+      const identity = {
         fullName: inputName,
         dob: inputDOB,
         address: inputAddress,
-        context: inputContext
-      });
+        context: inputContext,
+      };
+      const generated = await cryptoService.generateAlias(identity);
+      const report = await geminiService.fastAnalysis(inputContext);
 
       const newAlias: Alias = {
-        id: Math.random().toString(36).substr(2, 9),
-        hash: aliasStr,
-        context: inputContext,
+        id: crypto.randomUUID(),
+        hash: generated.alias,
+        fingerprint: generated.fingerprint,
+        context: inputContext.trim(),
         timestamp: Date.now(),
-        tags: [inputContext.toLowerCase()],
-        isRevoked: false
+        tags: inputContext.toLowerCase().split(/\s+/).filter(Boolean).slice(0, 4),
+        isRevoked: false,
       };
 
-      // Simulate the heavy lifting of entropy gathering
-      await new Promise(r => setTimeout(r, 1500));
-
+      const aliases = [newAlias, ...userState.aliasHistory];
+      await persistAliases(aliases);
       setGeneratedAlias(newAlias);
-      setUserState(prev => ({
-        ...prev,
-        aliasHistory: [newAlias, ...prev.aliasHistory]
-      }));
-      
-      // Get AI risk analysis of the context
-      const briefing = await geminiService.fastAnalysis(inputContext);
-      setAiResponse(briefing);
-    } catch (error) {
-      console.error("Generation failed", error);
+      setRiskReport(report);
     } finally {
       setIsGenerating(false);
     }
   };
 
-  const NavItem = ({ view, icon, label }: { view: AppView, icon: React.ReactNode, label: string }) => (
-    <button
-      onClick={() => setCurrentView(view)}
-      className={`flex flex-col items-center justify-center p-2 rounded-xl transition-all ${
-        currentView === view ? 'text-indigo-400 scale-110' : 'text-slate-400 hover:text-slate-200'
-      }`}
-    >
-      {icon}
-      <span className="text-[10px] mt-1 font-medium">{label}</span>
-    </button>
-  );
+  const copyAlias = async (alias: Alias) => {
+    await navigator.clipboard.writeText(alias.hash);
+    setCopiedId(alias.id);
+    window.setTimeout(() => setCopiedId(''), 1600);
+  };
+
+  const revokeAlias = async (aliasId: string) => {
+    const aliases = userState.aliasHistory.map(alias =>
+      alias.id === aliasId ? { ...alias, isRevoked: true } : alias
+    );
+    await persistAliases(aliases);
+  };
+
+  const exportVault = () => {
+    const blob = new Blob([JSON.stringify(userState.aliasHistory, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `identityguard-vault-${new Date().toISOString().slice(0, 10)}.json`;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const clearVault = async () => {
+    if (!session) return;
+    await persistAliases([]);
+    vaultService.clear();
+    setGeneratedAlias(null);
+    setRiskReport(emptyReport);
+  };
 
   const isFormComplete = inputContext && inputName && inputDOB && inputAddress;
 
-  return (
-    <div className="flex flex-col h-screen max-w-md mx-auto relative overflow-hidden bg-slate-950 text-slate-100">
-      
-      {/* AUTH SCREEN */}
-      {userState.isLocked && currentView === AppView.AUTH && (
-        <div className="absolute inset-0 z-50 glass flex flex-col items-center justify-center p-8 text-center">
-          <div className="mb-12 relative">
-            <div className="absolute inset-0 bg-indigo-500/20 blur-3xl rounded-full"></div>
-            <div className="relative p-6 glass rounded-3xl neon-border">
-              <ICONS.Shield />
-            </div>
+  const NavItem = ({ view, icon, label }: { view: AppView; icon: React.ReactNode; label: string }) => (
+    <button
+      className={`nav-item ${currentView === view ? 'active' : ''}`}
+      onClick={() => setCurrentView(view)}
+      type="button"
+    >
+      {icon}
+      <span>{label}</span>
+    </button>
+  );
+
+  if (userState.isLocked) {
+    return (
+      <main className="auth-shell">
+        <section className="auth-panel">
+          <div className="brand-mark">
+            <ICONS.Shield />
           </div>
-          <h1 className="text-3xl font-bold mb-2 tracking-tight">IdentityGuard</h1>
-          <p className="text-slate-400 mb-12 text-sm leading-relaxed">
-            Zero-Server Storage Protocol. <br/> Local hardware keys required.
+          <p className="eyebrow">Local-first privacy tool</p>
+          <h1>IdentityGuard</h1>
+          <p className="auth-copy">
+            Create one-use digital aliases and store them in an encrypted browser vault.
+            No identity record is sent to a server in default mode.
           </p>
-          <button
-            onClick={handleUnlock}
-            className="group relative flex flex-col items-center p-6 bg-slate-800/50 rounded-2xl border border-slate-700 hover:border-indigo-500/50 transition-all active:scale-95"
-          >
-            <div className="text-indigo-500 mb-4 animate-pulse group-hover:scale-110 transition-transform">
-              <ICONS.Fingerprint />
-            </div>
-            <span className="text-sm font-semibold text-slate-300">Biometric Unlock</span>
+          <label className="field-label" htmlFor="passphrase">Vault passphrase</label>
+          <input
+            id="passphrase"
+            type="password"
+            value={passphrase}
+            onChange={event => setPassphrase(event.target.value)}
+            onKeyDown={event => {
+              if (event.key === 'Enter') handleUnlock();
+            }}
+            placeholder="Minimum 8 characters"
+            autoComplete="current-password"
+          />
+          {unlockError && <p className="error-text">{unlockError}</p>}
+          <button className="primary-action" onClick={handleUnlock} type="button">
+            <ICONS.Lock /> Unlock local vault
           </button>
-        </div>
-      )}
-
-      {/* HEADER */}
-      {!userState.isLocked && (
-        <header className="p-6 flex items-center justify-between glass z-10 border-b border-slate-800">
-          <h2 className="text-xl font-bold tracking-tight flex items-center gap-2">
-            <span className="p-1.5 bg-indigo-500/20 rounded-lg text-indigo-400">
-              <ICONS.Shield />
-            </span>
-            IdentityGuard
-          </h2>
-          <div className="flex items-center gap-2 px-3 py-1 bg-green-500/10 border border-green-500/20 rounded-full">
-            <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse"></span>
-            <span className="text-[10px] font-bold text-green-500 uppercase tracking-widest">Live Security</span>
-          </div>
-        </header>
-      )}
-
-      {/* MAIN CONTENT AREA */}
-      <main className="flex-1 overflow-y-auto p-6 pb-24">
-        {!userState.isLocked && (
-          <>
-            {currentView === AppView.DASHBOARD && (
-              <div className="space-y-6">
-                <div className="glass p-6 rounded-3xl relative overflow-hidden">
-                  <div className="absolute -right-8 -top-8 w-32 h-32 bg-indigo-500/10 blur-3xl"></div>
-                  <h3 className="text-slate-400 text-xs font-bold uppercase mb-4 tracking-widest">Active Protection</h3>
-                  <div className="flex items-end justify-between">
-                    <div>
-                      <p className="text-4xl font-bold mono">{userState.aliasHistory.length}</p>
-                      <p className="text-sm text-slate-500">Encrypted Aliases</p>
-                    </div>
-                    <div className="text-right">
-                      <p className="text-xs font-bold text-indigo-400 mb-1">Vault Health</p>
-                      <p className="text-sm font-medium">Excellent</p>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-2 gap-4">
-                  <button 
-                    onClick={() => setCurrentView(AppView.GENERATE)}
-                    className="p-6 glass rounded-2xl hover:bg-slate-800/50 transition-colors flex flex-col items-center text-center"
-                  >
-                    <div className="p-3 bg-indigo-500/20 text-indigo-400 rounded-xl mb-3">
-                      <ICONS.Sparkles />
-                    </div>
-                    <span className="text-sm font-semibold">Generate</span>
-                  </button>
-                  <button 
-                    onClick={() => setCurrentView(AppView.VAULT)}
-                    className="p-6 glass rounded-2xl hover:bg-slate-800/50 transition-colors flex flex-col items-center text-center"
-                  >
-                    <div className="p-3 bg-slate-700/50 text-slate-400 rounded-xl mb-3">
-                      <ICONS.History />
-                    </div>
-                    <span className="text-sm font-semibold">Vault</span>
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {currentView === AppView.GENERATE && (
-              <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
-                <div className="glass p-6 rounded-3xl space-y-5 border border-slate-800">
-                  <h4 className="text-sm font-bold flex items-center gap-2 text-indigo-400 uppercase tracking-wider">
-                    <ICONS.Lock /> Identity Verification
-                  </h4>
-                  
-                  <div>
-                    <label className="text-[10px] font-bold text-slate-500 uppercase mb-2 block tracking-widest">Service Context</label>
-                    <input 
-                      type="text"
-                      placeholder="e.g. Personal Banking, Social Media"
-                      value={inputContext}
-                      onChange={(e) => setInputContext(e.target.value)}
-                      className="w-full bg-slate-900/80 border border-slate-700 rounded-xl p-3 text-sm focus:border-indigo-500 outline-none transition-all placeholder:text-slate-600"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="text-[10px] font-bold text-slate-500 uppercase mb-2 block tracking-widest">Full Legal Name</label>
-                    <input 
-                      type="text"
-                      placeholder="As shown on official ID"
-                      value={inputName}
-                      onChange={(e) => setInputName(e.target.value)}
-                      className="w-full bg-slate-900/80 border border-slate-700 rounded-xl p-3 text-sm focus:border-indigo-500 outline-none transition-all placeholder:text-slate-600"
-                    />
-                  </div>
-
-                  <div className="grid grid-cols-1 gap-5">
-                    <div>
-                      <label className="text-[10px] font-bold text-slate-500 uppercase mb-2 block tracking-widest">Date of Birth</label>
-                      <input 
-                        type="date"
-                        value={inputDOB}
-                        onChange={(e) => setInputDOB(e.target.value)}
-                        className="w-full bg-slate-900/80 border border-slate-700 rounded-xl p-3 text-sm focus:border-indigo-500 outline-none transition-all [color-scheme:dark]"
-                      />
-                    </div>
-                    <div>
-                      <label className="text-[10px] font-bold text-slate-500 uppercase mb-2 block tracking-widest">Permanent Home Address</label>
-                      <textarea 
-                        placeholder="Full residential address..."
-                        value={inputAddress}
-                        onChange={(e) => setInputAddress(e.target.value)}
-                        rows={2}
-                        className="w-full bg-slate-900/80 border border-slate-700 rounded-xl p-3 text-sm focus:border-indigo-500 outline-none transition-all placeholder:text-slate-600 resize-none"
-                      />
-                    </div>
-                  </div>
-                </div>
-
-                <button
-                  onClick={handleGenerate}
-                  disabled={!isFormComplete || isGenerating}
-                  className="w-full p-4 bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-800 disabled:text-slate-600 disabled:opacity-100 disabled:cursor-not-allowed text-white rounded-2xl font-bold text-sm shadow-xl shadow-indigo-500/10 transition-all flex items-center justify-center gap-3 active:scale-95"
-                >
-                  {isGenerating ? (
-                    <>
-                      <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
-                      Gathering Entropy...
-                    </>
-                  ) : (
-                    <>
-                      <ICONS.Lock /> Generate Secure Alias
-                    </>
-                  )}
-                </button>
-
-                {generatedAlias && !isGenerating && (
-                  <div className="animate-in zoom-in-95 duration-500 space-y-4">
-                    <div className="glass p-6 rounded-3xl border border-indigo-500/40 bg-indigo-500/5">
-                      <p className="text-[10px] font-bold text-indigo-400 uppercase mb-3 tracking-widest">Unique Digital Identity</p>
-                      <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 mb-4 flex items-center justify-between group">
-                        <span className="text-base font-bold mono tracking-tighter text-indigo-100 break-all">{generatedAlias.hash}</span>
-                        <button className="text-slate-500 hover:text-indigo-400 p-2 transition-colors">
-                          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3" /></svg>
-                        </button>
-                      </div>
-                      <p className="text-[10px] text-slate-500 text-center italic">Alias generated via DeviceID + Multi-Field Hash Binding</p>
-                    </div>
-                    {aiResponse && (
-                      <div className="glass p-5 rounded-3xl border border-slate-800">
-                        <h5 className="text-[10px] font-bold text-slate-500 mb-2 uppercase tracking-widest flex items-center gap-2">
-                          <ICONS.Sparkles /> AI Security Assessment
-                        </h5>
-                        <p className="text-sm leading-relaxed text-slate-300">{aiResponse}</p>
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-            )}
-
-            {currentView === AppView.VAULT && (
-               <div className="space-y-4">
-                <div className="flex items-center justify-between mb-2">
-                  <h3 className="text-lg font-bold">Encrypted Vault</h3>
-                  <span className="text-[10px] px-2 py-0.5 border border-indigo-500/20 text-indigo-400 bg-indigo-500/5 rounded-full font-bold">HARDWARE LOCKED</span>
-                </div>
-                {userState.aliasHistory.length === 0 ? (
-                  <div className="text-center py-20 glass rounded-3xl border border-dashed border-slate-800">
-                    <p className="text-slate-500 text-sm">Vault is empty.</p>
-                  </div>
-                ) : (
-                  userState.aliasHistory.map(alias => (
-                    <div key={alias.id} className="glass p-4 rounded-2xl flex items-center justify-between hover:border-indigo-500/30 transition-all cursor-pointer group">
-                      <div className="flex items-center gap-4">
-                        <div className="w-10 h-10 rounded-xl bg-slate-900 flex items-center justify-center text-indigo-400 group-hover:bg-indigo-500/10 transition-colors">
-                          <ICONS.Shield />
-                        </div>
-                        <div>
-                          <p className="font-bold text-sm text-white">{alias.context}</p>
-                          <p className="text-[10px] text-slate-500 mono">{alias.hash.substring(0, 16)}...</p>
-                        </div>
-                      </div>
-                      <div className="text-right">
-                         <p className="text-[9px] font-bold text-slate-600 uppercase mb-1">Created</p>
-                         <p className="text-[10px] font-medium text-slate-400">{new Date(alias.timestamp).toLocaleDateString()}</p>
-                      </div>
-                    </div>
-                  ))
-                )}
-               </div>
-            )}
-
-            {currentView === AppView.AI_TOOLS && (
-              <div className="space-y-6">
-                <div className="flex items-center gap-3 p-4 glass rounded-2xl border-l-4 border-indigo-500">
-                  <ICONS.Sparkles />
-                  <div>
-                    <h4 className="font-bold text-sm">AI Assistant Active</h4>
-                    <p className="text-[10px] text-slate-500">Identity verification and risk modeling</p>
-                  </div>
-                </div>
-                
-                <div className="grid grid-cols-1 gap-3">
-                  <button onClick={async () => setAiResponse(await geminiService.askIdentityAssistant("Latest identity theft prevention tips."))} className="p-4 glass rounded-xl text-left hover:border-indigo-500/50 flex items-center justify-between">
-                    <span className="text-sm font-semibold">Security Consultant</span>
-                    <ICONS.ChevronRight />
-                  </button>
-                  <button onClick={async () => {
-                    const result = await geminiService.searchSecurityThreats("Emerging identity fraud in 2025");
-                    setAiResponse(result.text);
-                  }} className="p-4 glass rounded-xl text-left hover:border-indigo-500/50 flex items-center justify-between">
-                    <span className="text-sm font-semibold">Threat Intelligence</span>
-                    <ICONS.Globe />
-                  </button>
-                </div>
-
-                {aiResponse && (
-                   <div className="glass p-6 rounded-3xl animate-in fade-in duration-500">
-                      <div className="flex items-center justify-between mb-4">
-                        <span className="text-[10px] font-bold text-indigo-400 uppercase tracking-widest">Model Output</span>
-                        <button onClick={() => setAiResponse('')} className="text-slate-500 text-[10px] hover:text-white underline uppercase">Clear</button>
-                      </div>
-                      <div className="text-sm text-slate-300 leading-relaxed whitespace-pre-wrap">
-                        {aiResponse}
-                      </div>
-                   </div>
-                )}
-              </div>
-            )}
-          </>
-        )}
+          <p className="fine-print">
+            This project is defensive software. Use it to reduce identity reuse and improve privacy hygiene.
+          </p>
+        </section>
       </main>
+    );
+  }
 
-      {/* FOOTER NAVIGATION */}
-      {!userState.isLocked && (
-        <nav className="absolute bottom-0 left-0 right-0 glass px-6 pt-3 pb-8 border-t border-slate-800 flex items-center justify-between z-10">
-          <NavItem view={AppView.DASHBOARD} icon={<ICONS.Shield />} label="Dash" />
+  return (
+    <div className="app-shell">
+      <aside className="sidebar">
+        <div className="sidebar-brand">
+          <span className="brand-badge"><ICONS.Shield /></span>
+          <div>
+            <strong>IdentityGuard</strong>
+            <small>Encrypted alias vault</small>
+          </div>
+        </div>
+        <nav className="nav-list" aria-label="Primary">
+          <NavItem view={AppView.DASHBOARD} icon={<ICONS.Shield />} label="Dashboard" />
           <NavItem view={AppView.GENERATE} icon={<ICONS.Sparkles />} label="Generate" />
           <NavItem view={AppView.VAULT} icon={<ICONS.History />} label="Vault" />
-          <NavItem view={AppView.AI_TOOLS} icon={<ICONS.Sparkles />} label="AI Suite" />
+          <NavItem view={AppView.AI_TOOLS} icon={<ICONS.Globe />} label="Risk" />
         </nav>
-      )}
+        <div className="sidebar-note">
+          <span>Vault key</span>
+          <strong>AES-GCM 256</strong>
+          <small>Derived locally with PBKDF2</small>
+        </div>
+      </aside>
 
-      {/* BACKGROUND EFFECTS */}
-      <div className="absolute inset-0 pointer-events-none -z-10 opacity-40">
-        <div className="absolute top-0 right-0 w-64 h-64 bg-indigo-600/10 blur-[100px] rounded-full"></div>
-        <div className="absolute bottom-0 left-0 w-64 h-64 bg-slate-900/50 blur-[100px] rounded-full"></div>
-      </div>
+      <main className="workspace">
+        <header className="topbar">
+          <div>
+            <p className="eyebrow">No-server mode active</p>
+            <h2>{currentView === AppView.DASHBOARD ? 'Privacy Control Room' : currentView}</h2>
+          </div>
+          <div className="status-pill">
+            <span />
+            Local vault unlocked
+          </div>
+        </header>
+
+        {currentView === AppView.DASHBOARD && (
+          <section className="dashboard-grid">
+            <article className="hero-card">
+              <div>
+                <p className="eyebrow">Current posture</p>
+                <h3>{activeAliases} active aliases</h3>
+                <p>
+                  Each alias is generated locally, stored encrypted, and intended for one service context only.
+                </p>
+              </div>
+              <div className="hero-meter" aria-label={`Risk score ${averageRisk}`}>
+                <span>{averageRisk || '--'}</span>
+                <small>Latest risk</small>
+              </div>
+            </article>
+
+            <article className="metric-card">
+              <span>Revoked</span>
+              <strong>{revokedAliases}</strong>
+              <small>Retired aliases</small>
+            </article>
+            <article className="metric-card">
+              <span>Rotation</span>
+              <strong>{cryptoService.getNextRotationDate()}</strong>
+              <small>Suggested review</small>
+            </article>
+            <article className="metric-card">
+              <span>Mode</span>
+              <strong>{userState.vaultReady ? 'Local' : 'Locked'}</strong>
+              <small>No backend required</small>
+            </article>
+          </section>
+        )}
+
+        {currentView === AppView.GENERATE && (
+          <section className="split-layout">
+            <article className="panel">
+              <p className="eyebrow">Generate alias</p>
+              <h3>Bind one alias to one real-world context.</h3>
+              <div className="form-grid">
+                <label>
+                  Service context
+                  <input value={inputContext} onChange={event => setInputContext(event.target.value)} placeholder="Business banking, crypto exchange, vendor onboarding" />
+                </label>
+                <label>
+                  Full legal name
+                  <input value={inputName} onChange={event => setInputName(event.target.value)} placeholder="Name used for the identity workflow" />
+                </label>
+                <label>
+                  Date of birth
+                  <input type="date" value={inputDOB} onChange={event => setInputDOB(event.target.value)} />
+                </label>
+                <label>
+                  Residential address
+                  <textarea value={inputAddress} onChange={event => setInputAddress(event.target.value)} rows={3} placeholder="Address used for this identity workflow" />
+                </label>
+              </div>
+              <button className="primary-action wide" disabled={!isFormComplete || isGenerating} onClick={handleGenerate} type="button">
+                <ICONS.Sparkles /> {isGenerating ? 'Generating locally...' : 'Generate secure alias'}
+              </button>
+            </article>
+
+            <article className="panel result-panel">
+              <p className="eyebrow">Latest alias</p>
+              {generatedAlias ? (
+                <>
+                  <code className="alias-output">{generatedAlias.hash}</code>
+                  <div className="result-actions">
+                    <button onClick={() => copyAlias(generatedAlias)} type="button"><ICONS.Copy /> {copiedId === generatedAlias.id ? 'Copied' : 'Copy'}</button>
+                    <button onClick={() => revokeAlias(generatedAlias.id)} type="button"><ICONS.Trash /> Revoke</button>
+                  </div>
+                  <dl className="detail-list">
+                    <div><dt>Fingerprint</dt><dd>{generatedAlias.fingerprint}</dd></div>
+                    <div><dt>Context</dt><dd>{generatedAlias.context}</dd></div>
+                    <div><dt>Created</dt><dd>{new Date(generatedAlias.timestamp).toLocaleString()}</dd></div>
+                  </dl>
+                </>
+              ) : (
+                <p className="empty-state">Generated aliases will appear here with copy, revoke, and export controls.</p>
+              )}
+            </article>
+          </section>
+        )}
+
+        {currentView === AppView.VAULT && (
+          <section className="panel">
+            <div className="section-head">
+              <div>
+                <p className="eyebrow">Encrypted vault</p>
+                <h3>{userState.aliasHistory.length} stored aliases</h3>
+              </div>
+              <div className="button-row">
+                <button onClick={exportVault} disabled={userState.aliasHistory.length === 0} type="button"><ICONS.Download /> Export</button>
+                <button onClick={clearVault} disabled={userState.aliasHistory.length === 0} type="button"><ICONS.Trash /> Clear</button>
+              </div>
+            </div>
+            <div className="vault-list">
+              {userState.aliasHistory.length === 0 && <p className="empty-state">The vault is empty.</p>}
+              {userState.aliasHistory.map(alias => (
+                <article className={`vault-item ${alias.isRevoked ? 'revoked' : ''}`} key={alias.id}>
+                  <div>
+                    <strong>{alias.context}</strong>
+                    <code>{alias.hash}</code>
+                    <small>{alias.fingerprint} | {new Date(alias.timestamp).toLocaleDateString()}</small>
+                  </div>
+                  <div className="button-row">
+                    <button onClick={() => copyAlias(alias)} type="button"><ICONS.Copy /> {copiedId === alias.id ? 'Copied' : 'Copy'}</button>
+                    {!alias.isRevoked && <button onClick={() => revokeAlias(alias.id)} type="button"><ICONS.Trash /> Revoke</button>}
+                  </div>
+                </article>
+              ))}
+            </div>
+          </section>
+        )}
+
+        {currentView === AppView.AI_TOOLS && (
+          <section className="split-layout">
+            <article className="panel">
+              <p className="eyebrow">Risk model</p>
+              <h3>{riskReport.summary}</h3>
+              <div className="score-block">
+                <span>{riskReport.score || '--'}</span>
+                <small>Local risk score</small>
+              </div>
+              <p>
+                Optional AI can be connected through a private backend endpoint, but the default open-source build uses local deterministic analysis only.
+              </p>
+            </article>
+            <article className="panel">
+              <p className="eyebrow">Findings</p>
+              <div className="finding-list">
+                {riskReport.findings.length === 0 && <p className="empty-state">Generate an alias to create a risk briefing.</p>}
+                {riskReport.findings.map(finding => (
+                  <div className="finding" key={finding.label}>
+                    <span className={`risk-dot ${finding.level.toLowerCase()}`} />
+                    <div>
+                      <strong>{finding.label} ({finding.level})</strong>
+                      <p>{finding.detail}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              {riskReport.recommendations.length > 0 && (
+                <ul className="recommendations">
+                  {riskReport.recommendations.map(item => <li key={item}>{item}</li>)}
+                </ul>
+              )}
+            </article>
+          </section>
+        )}
+      </main>
     </div>
   );
 };

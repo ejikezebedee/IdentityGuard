@@ -13,20 +13,40 @@ export interface Alias {
   hash: string;
   context: string;
   timestamp: number;
+  fingerprint: string;
   tags: string[];
   isRevoked: boolean;
   notes?: string;
   expiresAt?: number;
 }
 
-export interface EncryptionStatus {
-  isActive: boolean;
-  level: 'AES-256' | 'SHA-3' | 'CHACHA20';
-  strength: 'High' | 'Medium' | 'Low';
+export interface IdentityData {
+  fullName: string;
+  dob: string;
+  address: string;
+  context: string;
 }
 
 export interface UserState {
   isLocked: boolean;
-  hasHardwareKey: boolean;
+  vaultReady: boolean;
   aliasHistory: Alias[];
+}
+
+export interface VaultSession {
+  key: CryptoKey;
+  createdAt: number;
+}
+
+export interface RiskFinding {
+  label: string;
+  level: 'Low' | 'Medium' | 'High';
+  detail: string;
+}
+
+export interface RiskReport {
+  summary: string;
+  score: number;
+  findings: RiskFinding[];
+  recommendations: string[];
 }
