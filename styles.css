@@ -154,6 +154,7 @@ textarea:focus {
 }
 
 .primary-action,
+.primary-inline,
 .button-row button,
 .result-actions button,
 .vault-item button {
@@ -173,6 +174,14 @@ textarea:focus {
   width: 100%;
   margin-top: 18px;
   padding: 15px 18px;
+  color: #061017;
+  background: linear-gradient(135deg, var(--accent), #7ddcff);
+  border: 0;
+  font-weight: 900;
+}
+
+.primary-inline {
+  padding: 0 16px;
   color: #061017;
   background: linear-gradient(135deg, var(--accent), #7ddcff);
   border: 0;
@@ -529,6 +538,72 @@ textarea:focus {
   margin: 20px 0;
 }
 
+.score-block.square {
+  border-radius: 8px;
+}
+
+.plan-grid,
+.audit-list {
+  display: grid;
+  gap: 12px;
+  margin-top: 20px;
+}
+
+.plan-card {
+  display: grid;
+  gap: 8px;
+  width: 100%;
+  min-height: 126px;
+  padding: 18px;
+  color: var(--text);
+  text-align: left;
+  background: rgba(8, 17, 31, 0.62);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.plan-card.selected {
+  border-color: rgba(62, 230, 181, 0.74);
+  box-shadow: 0 0 0 3px rgba(62, 230, 181, 0.12);
+}
+
+.plan-card strong {
+  font-size: 1.15rem;
+}
+
+.plan-card span {
+  color: var(--accent);
+  font-size: 1.8rem;
+  font-weight: 900;
+}
+
+.plan-card small,
+.audit-item small {
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.audit-item {
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--accent-2);
+  border-radius: 8px;
+  background: rgba(8, 17, 31, 0.58);
+}
+
+.audit-item.warning {
+  border-left-color: var(--warn);
+}
+
+.audit-item.critical {
+  border-left-color: var(--danger);
+}
+
+.audit-item p {
+  margin: 6px 0;
+}
+
 @media (max-width: 860px) {
   .app-shell,
   .split-layout,
@@ -547,7 +622,8 @@ textarea:focus {
   }
 
   .nav-list {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-columns: repeat(7, minmax(42px, 1fr));
+    overflow-x: auto;
   }
 
   .nav-item {

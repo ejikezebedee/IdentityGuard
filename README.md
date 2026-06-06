@@ -4,7 +4,7 @@
 
 IdentityGuard is a local-first digital alias vault for privacy-preserving identity workflows. It helps users create one-use aliases for banks, exchanges, vendors, marketplaces, onboarding forms, and other contexts where reusing the same identity reference increases exposure.
 
-The default open-source build runs in the browser, encrypts the vault locally, and does not require a cloud API key.
+The default open-source build runs in the browser, encrypts the vault locally, and does not require a cloud API key. The current app also includes SaaS-ready account, billing-plan, sync-readiness, and audit screens so teams can test the commercial workflow before connecting production infrastructure.
 
 ## Why It Exists
 
@@ -26,6 +26,10 @@ People reuse the same identity details across too many services. When one servic
 - Local deterministic risk analysis
 - Optional private AI endpoint support through `VITE_IDENTITYGUARD_AI_ENDPOINT`
 - Copy, revoke, export, and clear vault controls
+- SaaS test account flow for email-based onboarding
+- Free, Pro, and Team plan selection model
+- Encrypted sync readiness screen for private backend planning
+- Local audit trail for account and vault workflow events
 - Defensive-only open-source security posture
 
 ## Security Model
@@ -35,6 +39,18 @@ IdentityGuard default mode keeps identity processing in the browser. It does not
 The vault is encrypted before being stored in browser local storage. This improves privacy but does not make a compromised device safe. Malware, malicious browser extensions, device theft, and weak passphrases can still put data at risk.
 
 Generated aliases are privacy workflow identifiers. They are not official IDs, legal credentials, or authentication tokens.
+
+## SaaS Edition Path
+
+IdentityGuard can be upgraded into a hosted commercial SaaS by adding production backend services for authentication, encrypted sync, billing, email delivery, audit storage, and support operations.
+
+The repo includes planning documents for that path:
+
+- [SaaS implementation plan](./docs/SAAS_IMPLEMENTATION.md)
+- [SaaS API contract](./docs/API_CONTRACT.md)
+- [Release audit](./docs/RELEASE_AUDIT.md)
+
+The browser app deliberately does not store payment secrets, AI provider keys, or raw backend credentials.
 
 ## Quick Start
 
@@ -99,11 +115,18 @@ If no endpoint is configured, IdentityGuard uses local deterministic analysis.
 ├── index.tsx
 ├── services
 │   ├── cryptoService.ts
+│   ├── accountService.ts
 │   ├── geminiService.ts
 │   ├── riskService.ts
+│   ├── syncService.ts
 │   └── vaultService.ts
 ├── styles.css
 ├── types.ts
+├── docs
+│   ├── API_CONTRACT.md
+│   ├── RELEASE_AUDIT.md
+│   ├── SAAS_IMPLEMENTATION.md
+│   └── product-images
 └── vite.config.ts
 ```
 
@@ -114,7 +137,7 @@ If no endpoint is configured, IdentityGuard uses local deterministic analysis.
 - Add passphrase strength meter
 - Add optional WebAuthn unlock support
 - Add signed release artifacts
-- Add private backend example for AI risk analysis
+- Build the production backend for auth, billing, sync, and AI risk analysis
 
 ## Defensive Use Only
 

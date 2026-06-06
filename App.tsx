@@ -1,8 +1,10 @@
 import React, { useMemo, useState } from 'react';
-import { AppView, Alias, RiskReport, UserState, VaultSession } from './types';
+import { AppView, Alias, RiskReport, SubscriptionPlan, UserState, VaultSession } from './types';
 import { ICONS } from './constants';
+import { accountService } from './services/accountService';
 import { cryptoService } from './services/cryptoService';
 import { geminiService } from './services/geminiService';
+import { syncService } from './services/syncService';
 import { vaultService } from './services/vaultService';
 
 const emptyReport: RiskReport = {
@@ -21,6 +23,9 @@ const App: React.FC = () => {
     isLocked: true,
     vaultReady: false,
     aliasHistory: [],
+    customer: accountService.loadProfile(),
+    syncState: syncService.load(),
+    auditEvents: accountService.loadAuditEvents(),
   });
 
   const [inputContext, setInputContext] = useState('');
@@ -31,6 +36,9 @@ const App: React.FC = () => {
   const [isGenerating, setIsGenerating] = useState(false);
   const [riskReport, setRiskReport] = useState<RiskReport>(emptyReport);
   const [copiedId, setCopiedId] = useState('');
+  const [accountEmail, setAccountEmail] = useState(userState.customer?.email || '');
+  const [accountName, setAccountName] = useState(userState.customer?.displayName || '');
+  const [syncEndpoint, setSyncEndpoint] = useState(userState.syncState.endpoint);
 
   const activeAliases = userState.aliasHistory.filter(alias => !alias.isRevoked).length;
   const revokedAliases = userState.aliasHistory.length - activeAliases;
@@ -46,7 +54,15 @@ const App: React.FC = () => {
       const nextSession = await vaultService.unlock(passphrase);
       const aliases = await vaultService.load(nextSession);
       setSession(nextSession);
-      setUserState({ isLocked: false, vaultReady: true, aliasHistory: aliases });
+      setUserState(prev => ({
+        ...prev,
+        isLocked: false,
+        vaultReady: true,
+        aliasHistory: aliases,
+        customer: accountService.loadProfile(),
+        syncState: syncService.load(),
+        auditEvents: accountService.loadAuditEvents(),
+      }));
       setCurrentView(AppView.DASHBOARD);
     } catch (error) {
       setUnlockError(error instanceof Error ? error.message : 'Vault unlock failed.');
@@ -56,7 +72,8 @@ const App: React.FC = () => {
   const persistAliases = async (aliases: Alias[]) => {
     if (!session) return;
     await vaultService.save(session, aliases);
-    setUserState(prev => ({ ...prev, aliasHistory: aliases }));
+    const nextSyncState = syncService.markPending(aliases);
+    setUserState(prev => ({ ...prev, aliasHistory: aliases, syncState: nextSyncState }));
   };
 
   const handleGenerate = async () => {
@@ -85,6 +102,12 @@ const App: React.FC = () => {
 
       const aliases = [newAlias, ...userState.aliasHistory];
       await persistAliases(aliases);
+      const auditEvents = accountService.recordAudit({
+        action: 'Alias generated',
+        detail: `Created a defensive alias for ${newAlias.context}.`,
+        severity: 'Info',
+      });
+      setUserState(prev => ({ ...prev, auditEvents }));
       setGeneratedAlias(newAlias);
       setRiskReport(report);
     } finally {
@@ -103,6 +126,12 @@ const App: React.FC = () => {
       alias.id === aliasId ? { ...alias, isRevoked: true } : alias
     );
     await persistAliases(aliases);
+    const auditEvents = accountService.recordAudit({
+      action: 'Alias revoked',
+      detail: 'A stored alias was retired from active use.',
+      severity: 'Warning',
+    });
+    setUserState(prev => ({ ...prev, auditEvents }));
   };
 
   const exportVault = () => {
@@ -119,8 +148,67 @@ const App: React.FC = () => {
     if (!session) return;
     await persistAliases([]);
     vaultService.clear();
+    const auditEvents = accountService.recordAudit({
+      action: 'Vault cleared',
+      detail: 'All local vault aliases were removed from this browser.',
+      severity: 'Critical',
+    });
+    setUserState(prev => ({ ...prev, auditEvents }));
     setGeneratedAlias(null);
     setRiskReport(emptyReport);
+  };
+
+  const handleAccountSave = () => {
+    if (!accountEmail.trim()) return;
+
+    const profile = userState.customer
+      ? accountService.saveProfile({
+        ...userState.customer,
+        email: accountEmail.trim().toLowerCase(),
+        displayName: accountName.trim() || userState.customer.displayName,
+      })
+      : accountService.createProfile(accountEmail, accountName);
+
+    setUserState(prev => ({
+      ...prev,
+      customer: profile,
+      auditEvents: accountService.loadAuditEvents(),
+    }));
+  };
+
+  const handleVerifyEmail = () => {
+    if (!userState.customer) return;
+    const profile = accountService.verifyEmail(userState.customer);
+    setUserState(prev => ({
+      ...prev,
+      customer: profile,
+      auditEvents: accountService.loadAuditEvents(),
+    }));
+  };
+
+  const handlePlanChange = (plan: SubscriptionPlan) => {
+    if (!userState.customer) return;
+    const profile = accountService.updatePlan(userState.customer, plan);
+    setUserState(prev => ({
+      ...prev,
+      customer: profile,
+      auditEvents: accountService.loadAuditEvents(),
+    }));
+  };
+
+  const handleSyncConfigure = () => {
+    const nextSyncState = syncService.configure(syncEndpoint);
+    setUserState(prev => ({ ...prev, syncState: nextSyncState }));
+  };
+
+  const handleSyncCheck = () => {
+    const nextSyncState = syncService.completeSync();
+    const auditEvents = accountService.recordAudit({
+      action: 'Sync readiness checked',
+      detail: nextSyncState.message,
+      severity: 'Info',
+    });
+    setUserState(prev => ({ ...prev, syncState: nextSyncState, auditEvents }));
   };
 
   const isFormComplete = inputContext && inputName && inputDOB && inputAddress;
@@ -188,6 +276,9 @@ const App: React.FC = () => {
           <NavItem view={AppView.GENERATE} icon={<ICONS.Sparkles />} label="Generate" />
           <NavItem view={AppView.VAULT} icon={<ICONS.History />} label="Vault" />
           <NavItem view={AppView.AI_TOOLS} icon={<ICONS.Globe />} label="Risk" />
+          <NavItem view={AppView.ACCOUNT} icon={<ICONS.User />} label="Account" />
+          <NavItem view={AppView.SYNC} icon={<ICONS.Cloud />} label="Sync" />
+          <NavItem view={AppView.BILLING} icon={<ICONS.CreditCard />} label="Billing" />
         </nav>
         <div className="sidebar-note">
           <span>Vault key</span>
@@ -238,6 +329,21 @@ const App: React.FC = () => {
               <span>Mode</span>
               <strong>{userState.vaultReady ? 'Local' : 'Locked'}</strong>
               <small>No backend required</small>
+            </article>
+            <article className="metric-card">
+              <span>Account</span>
+              <strong>{userState.customer ? userState.customer.plan : 'Guest'}</strong>
+              <small>{userState.customer?.emailVerified ? 'Email verified' : 'Local test profile'}</small>
+            </article>
+            <article className="metric-card">
+              <span>Sync</span>
+              <strong>{userState.syncState.status}</strong>
+              <small>{userState.syncState.pendingItems} pending records</small>
+            </article>
+            <article className="metric-card">
+              <span>Audit</span>
+              <strong>{userState.auditEvents.length}</strong>
+              <small>Recent local events</small>
             </article>
           </section>
         )}
@@ -355,6 +461,138 @@ const App: React.FC = () => {
                   {riskReport.recommendations.map(item => <li key={item}>{item}</li>)}
                 </ul>
               )}
+            </article>
+          </section>
+        )}
+
+        {currentView === AppView.ACCOUNT && (
+          <section className="split-layout">
+            <article className="panel">
+              <p className="eyebrow">SaaS account</p>
+              <h3>Prepare a customer profile for hosted IdentityGuard.</h3>
+              <p>
+                Use a test email during development. This local profile validates onboarding flow without exposing private vault content.
+              </p>
+              <div className="form-grid">
+                <label>
+                  Email address
+                  <input value={accountEmail} onChange={event => setAccountEmail(event.target.value)} placeholder="tester@example.com" type="email" />
+                </label>
+                <label>
+                  Display name
+                  <input value={accountName} onChange={event => setAccountName(event.target.value)} placeholder="IdentityGuard tester" />
+                </label>
+              </div>
+              <div className="button-row">
+                <button className="primary-inline" onClick={handleAccountSave} disabled={!accountEmail.trim()} type="button">
+                  <ICONS.User /> Save test account
+                </button>
+                <button onClick={handleVerifyEmail} disabled={!userState.customer || userState.customer.emailVerified} type="button">
+                  <ICONS.Check /> Mark email verified
+                </button>
+              </div>
+            </article>
+
+            <article className="panel">
+              <p className="eyebrow">Account status</p>
+              {userState.customer ? (
+                <dl className="detail-list">
+                  <div><dt>Email</dt><dd>{userState.customer.email}</dd></div>
+                  <div><dt>Name</dt><dd>{userState.customer.displayName}</dd></div>
+                  <div><dt>Plan</dt><dd>{userState.customer.plan}</dd></div>
+                  <div><dt>Email status</dt><dd>{userState.customer.emailVerified ? 'Verified' : 'Pending test verification'}</dd></div>
+                  <div><dt>Created</dt><dd>{new Date(userState.customer.createdAt).toLocaleString()}</dd></div>
+                </dl>
+              ) : (
+                <p className="empty-state">No SaaS test account has been created on this browser.</p>
+              )}
+            </article>
+          </section>
+        )}
+
+        {currentView === AppView.SYNC && (
+          <section className="split-layout">
+            <article className="panel">
+              <p className="eyebrow">Encrypted sync</p>
+              <h3>Configure a private backend endpoint.</h3>
+              <p>
+                The frontend only stores endpoint readiness. A production backend must accept encrypted vault blobs and must never require raw identity fields.
+              </p>
+              <div className="form-grid">
+                <label>
+                  Sync endpoint
+                  <input value={syncEndpoint} onChange={event => setSyncEndpoint(event.target.value)} placeholder="https://api.example.com/v1/sync" />
+                </label>
+              </div>
+              <div className="button-row">
+                <button className="primary-inline" onClick={handleSyncConfigure} type="button">
+                  <ICONS.Cloud /> Save sync settings
+                </button>
+                <button onClick={handleSyncCheck} disabled={!userState.syncState.enabled} type="button">
+                  <ICONS.Check /> Run readiness check
+                </button>
+              </div>
+            </article>
+
+            <article className="panel">
+              <p className="eyebrow">Sync posture</p>
+              <div className="score-block square">
+                <span>{userState.syncState.pendingItems}</span>
+                <small>Pending</small>
+              </div>
+              <dl className="detail-list">
+                <div><dt>Status</dt><dd>{userState.syncState.status}</dd></div>
+                <div><dt>Endpoint</dt><dd>{userState.syncState.endpoint || 'Not configured'}</dd></div>
+                <div><dt>Last check</dt><dd>{userState.syncState.lastSyncAt ? new Date(userState.syncState.lastSyncAt).toLocaleString() : 'Not checked'}</dd></div>
+                <div><dt>Message</dt><dd>{userState.syncState.message}</dd></div>
+              </dl>
+            </article>
+          </section>
+        )}
+
+        {currentView === AppView.BILLING && (
+          <section className="split-layout">
+            <article className="panel">
+              <p className="eyebrow">Commercial plans</p>
+              <h3>Validate SaaS packaging before connecting payments.</h3>
+              <p>
+                Plan selection is local-only in this build. Connect Stripe, Paddle, or Lemon Squeezy in the backend before collecting money.
+              </p>
+              <div className="plan-grid">
+                {(['Free', 'Pro', 'Team'] as SubscriptionPlan[]).map(plan => (
+                  <button
+                    className={`plan-card ${userState.customer?.plan === plan ? 'selected' : ''}`}
+                    disabled={!userState.customer}
+                    key={plan}
+                    onClick={() => handlePlanChange(plan)}
+                    type="button"
+                  >
+                    <strong>{plan}</strong>
+                    <span>{plan === 'Free' ? '$0' : plan === 'Pro' ? '$9/mo' : '$29/mo'}</span>
+                    <small>
+                      {plan === 'Free'
+                        ? 'Local vault and manual export'
+                        : plan === 'Pro'
+                          ? 'Encrypted sync and risk workflows'
+                          : 'Shared policy, audit, and admin controls'}
+                    </small>
+                  </button>
+                ))}
+              </div>
+            </article>
+
+            <article className="panel">
+              <p className="eyebrow">Audit trail</p>
+              <div className="audit-list">
+                {userState.auditEvents.length === 0 && <p className="empty-state">Account and vault events will appear here.</p>}
+                {userState.auditEvents.map(event => (
+                  <article className={`audit-item ${event.severity.toLowerCase()}`} key={event.id}>
+                    <strong>{event.action}</strong>
+                    <p>{event.detail}</p>
+                    <small>{new Date(event.timestamp).toLocaleString()} | {event.severity}</small>
+                  </article>
+                ))}
+              </div>
             </article>
           </section>
         )}

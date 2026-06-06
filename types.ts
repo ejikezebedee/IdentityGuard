@@ -5,6 +5,9 @@ export enum AppView {
   GENERATE = 'GENERATE',
   VAULT = 'VAULT',
   AI_TOOLS = 'AI_TOOLS',
+  ACCOUNT = 'ACCOUNT',
+  SYNC = 'SYNC',
+  BILLING = 'BILLING',
   SETTINGS = 'SETTINGS'
 }
 
@@ -31,6 +34,9 @@ export interface UserState {
   isLocked: boolean;
   vaultReady: boolean;
   aliasHistory: Alias[];
+  customer: CustomerProfile | null;
+  syncState: SyncState;
+  auditEvents: AuditEvent[];
 }
 
 export interface VaultSession {
@@ -49,4 +55,31 @@ export interface RiskReport {
   score: number;
   findings: RiskFinding[];
   recommendations: string[];
+}
+
+export type SubscriptionPlan = 'Free' | 'Pro' | 'Team';
+
+export interface CustomerProfile {
+  email: string;
+  displayName: string;
+  plan: SubscriptionPlan;
+  emailVerified: boolean;
+  createdAt: number;
+}
+
+export interface SyncState {
+  enabled: boolean;
+  endpoint: string;
+  lastSyncAt?: number;
+  pendingItems: number;
+  status: 'Local only' | 'Ready' | 'Syncing' | 'Error';
+  message: string;
+}
+
+export interface AuditEvent {
+  id: string;
+  timestamp: number;
+  action: string;
+  detail: string;
+  severity: 'Info' | 'Warning' | 'Critical';
 }
