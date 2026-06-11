@@ -1,18 +1,17 @@
-
 import { IdentityData } from '../types';
 
 const BASE58_ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
 
 export const toHex = (buffer: ArrayBuffer, length = 16): string => {
   return Array.from(new Uint8Array(buffer))
-    .map(byte => byte.toString(16).padStart(2, '0'))
+    .map((byte) => byte.toString(16).padStart(2, '0'))
     .join('')
     .slice(0, length);
 };
 
 export const base58Encode = (buffer: ArrayBuffer): string => {
   const bytes = new Uint8Array(buffer);
-  let digits = [0];
+  const digits = [0];
 
   for (const byte of bytes) {
     let carry = byte;
@@ -32,7 +31,10 @@ export const base58Encode = (buffer: ArrayBuffer): string => {
     else break;
   }
 
-  return digits.reverse().map(digit => BASE58_ALPHABET[digit]).join('');
+  return digits
+    .reverse()
+    .map((digit) => BASE58_ALPHABET[digit])
+    .join('');
 };
 
 const normalizeIdentity = (identity: IdentityData): string => {
@@ -69,5 +71,5 @@ export const cryptoService = {
     const date = new Date();
     date.setDate(date.getDate() + 30);
     return date.toLocaleDateString();
-  }
+  },
 };

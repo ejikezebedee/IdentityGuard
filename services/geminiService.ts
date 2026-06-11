@@ -1,4 +1,3 @@
-
 import { RiskReport } from '../types';
 import { riskService } from './riskService';
 
@@ -15,5 +14,5 @@ export const geminiService = {
 
     if (!response.ok) return riskService.analyze(input);
     return response.json() as Promise<RiskReport>;
-  }
+  },
 };

@@ -1,4 +1,3 @@
-
 export enum AppView {
   AUTH = 'AUTH',
   DASHBOARD = 'DASHBOARD',
@@ -8,7 +7,7 @@ export enum AppView {
   ACCOUNT = 'ACCOUNT',
   SYNC = 'SYNC',
   BILLING = 'BILLING',
-  SETTINGS = 'SETTINGS'
+  SETTINGS = 'SETTINGS',
 }
 
 export interface Alias {

@@ -21,11 +21,12 @@ People reuse the same identity details across too many services. When one servic
 - Local-first React/Vite app
 - Encrypted browser vault using AES-GCM
 - PBKDF2-derived vault key from the user's passphrase
+- Minimum 12-character passphrase policy with strength guidance
 - Strong browser crypto through Web Crypto APIs
 - Base58-encoded digital aliases
 - Local deterministic risk analysis
 - Optional private AI endpoint support through `VITE_IDENTITYGUARD_AI_ENDPOINT`
-- Copy, revoke, export, and clear vault controls
+- Copy, revoke, plaintext export warning, and clear vault controls
 - SaaS test account flow for email-based onboarding
 - Free, Pro, and Team plan selection model
 - Encrypted sync readiness screen for private backend planning
@@ -38,6 +39,10 @@ IdentityGuard default mode keeps identity processing in the browser. It does not
 
 The vault is encrypted before being stored in browser local storage. This improves privacy but does not make a compromised device safe. Malware, malicious browser extensions, device theft, and weak passphrases can still put data at risk.
 
+Use a long memorable passphrase with at least 12 characters. Weak passphrases reduce vault safety because the encrypted vault is only as strong as the passphrase-derived key.
+
+Plaintext vault export is available for manual portability only. Exported vault files are plaintext. Store them securely.
+
 Generated aliases are privacy workflow identifiers. They are not official IDs, legal credentials, or authentication tokens.
 
 ## SaaS Edition Path
@@ -49,6 +54,7 @@ The repo includes planning documents for that path:
 - [SaaS implementation plan](./docs/SAAS_IMPLEMENTATION.md)
 - [SaaS API contract](./docs/API_CONTRACT.md)
 - [Release audit](./docs/RELEASE_AUDIT.md)
+- [Encrypted export/import roadmap](./docs/ENCRYPTED_EXPORT_IMPORT_ROADMAP.md)
 
 The browser app deliberately does not store payment secrets, AI provider keys, or raw backend credentials.
 
@@ -70,7 +76,11 @@ Then open the local Vite URL shown in your terminal.
 
 ```bash
 npm run typecheck
+npm run lint
+npm run format
+npm test
 npm run build
+npm run scan:secrets
 npm run preview
 ```
 
@@ -132,9 +142,8 @@ If no endpoint is configured, IdentityGuard uses local deterministic analysis.
 
 ## Roadmap
 
-- Add automated browser smoke tests
-- Add import flow for exported vault files
-- Add passphrase strength meter
+- Add encrypted export/import implementation
+- Add passphrase strength meter beyond MVP guidance
 - Add optional WebAuthn unlock support
 - Add signed release artifacts
 - Build the production backend for auth, billing, sync, and AI risk analysis

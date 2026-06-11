@@ -3,7 +3,7 @@ import { AuditEvent, CustomerProfile, SubscriptionPlan } from '../types';
 const CUSTOMER_KEY = 'identityguard.customerProfile.v1';
 const AUDIT_KEY = 'identityguard.auditEvents.v1';
 
-const readJson = <T,>(key: string, fallback: T): T => {
+const readJson = <T>(key: string, fallback: T): T => {
   const stored = localStorage.getItem(key);
   if (!stored) return fallback;
 

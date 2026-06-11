@@ -1,6 +1,6 @@
 :root {
   color-scheme: dark;
-  font-family: "Aptos", "Segoe UI", sans-serif;
+  font-family: 'Aptos', 'Segoe UI', sans-serif;
   background: #0a0f1c;
   color: #edf4ff;
   --bg: #0a0f1c;
@@ -49,7 +49,7 @@ code,
 .alias-output,
 .detail-list dd,
 .vault-item small {
-  font-family: "Cascadia Code", "SFMono-Regular", Consolas, monospace;
+  font-family: 'Cascadia Code', 'SFMono-Regular', Consolas, monospace;
 }
 
 .auth-shell {
@@ -200,6 +200,12 @@ textarea:focus {
 .fine-print {
   margin-bottom: 0;
   font-size: 0.82rem;
+}
+
+.warning-note {
+  margin: 16px 0 0;
+  color: var(--warn);
+  font-weight: 800;
 }
 
 .app-shell {

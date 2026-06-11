@@ -5,7 +5,8 @@ import { accountService } from './services/accountService';
 import { cryptoService } from './services/cryptoService';
 import { geminiService } from './services/geminiService';
 import { syncService } from './services/syncService';
-import { vaultService } from './services/vaultService';
+import { createAliasRecord, revokeAliasById } from './services/aliasService';
+import { PASSPHRASE_GUIDANCE, vaultService } from './services/vaultService';
 
 const emptyReport: RiskReport = {
   summary: 'Generate an alias to see a local risk briefing.',
@@ -40,7 +41,7 @@ const App: React.FC = () => {
   const [accountName, setAccountName] = useState(userState.customer?.displayName || '');
   const [syncEndpoint, setSyncEndpoint] = useState(userState.syncState.endpoint);
 
-  const activeAliases = userState.aliasHistory.filter(alias => !alias.isRevoked).length;
+  const activeAliases = userState.aliasHistory.filter((alias) => !alias.isRevoked).length;
   const revokedAliases = userState.aliasHistory.length - activeAliases;
 
   const averageRisk = useMemo(() => {
@@ -54,7 +55,7 @@ const App: React.FC = () => {
       const nextSession = await vaultService.unlock(passphrase);
       const aliases = await vaultService.load(nextSession);
       setSession(nextSession);
-      setUserState(prev => ({
+      setUserState((prev) => ({
         ...prev,
         isLocked: false,
         vaultReady: true,
@@ -73,7 +74,7 @@ const App: React.FC = () => {
     if (!session) return;
     await vaultService.save(session, aliases);
     const nextSyncState = syncService.markPending(aliases);
-    setUserState(prev => ({ ...prev, aliasHistory: aliases, syncState: nextSyncState }));
+    setUserState((prev) => ({ ...prev, aliasHistory: aliases, syncState: nextSyncState }));
   };
 
   const handleGenerate = async () => {
@@ -90,15 +91,7 @@ const App: React.FC = () => {
       const generated = await cryptoService.generateAlias(identity);
       const report = await geminiService.fastAnalysis(inputContext);
 
-      const newAlias: Alias = {
-        id: crypto.randomUUID(),
-        hash: generated.alias,
-        fingerprint: generated.fingerprint,
-        context: inputContext.trim(),
-        timestamp: Date.now(),
-        tags: inputContext.toLowerCase().split(/\s+/).filter(Boolean).slice(0, 4),
-        isRevoked: false,
-      };
+      const newAlias = createAliasRecord(inputContext, generated.alias, generated.fingerprint);
 
       const aliases = [newAlias, ...userState.aliasHistory];
       await persistAliases(aliases);
@@ -107,7 +100,7 @@ const App: React.FC = () => {
         detail: `Created a defensive alias for ${newAlias.context}.`,
         severity: 'Info',
       });
-      setUserState(prev => ({ ...prev, auditEvents }));
+      setUserState((prev) => ({ ...prev, auditEvents }));
       setGeneratedAlias(newAlias);
       setRiskReport(report);
     } finally {
@@ -122,19 +115,20 @@ const App: React.FC = () => {
   };
 
   const revokeAlias = async (aliasId: string) => {
-    const aliases = userState.aliasHistory.map(alias =>
-      alias.id === aliasId ? { ...alias, isRevoked: true } : alias
-    );
+    const aliases = revokeAliasById(userState.aliasHistory, aliasId);
     await persistAliases(aliases);
     const auditEvents = accountService.recordAudit({
       action: 'Alias revoked',
       detail: 'A stored alias was retired from active use.',
       severity: 'Warning',
     });
-    setUserState(prev => ({ ...prev, auditEvents }));
+    setUserState((prev) => ({ ...prev, auditEvents }));
   };
 
   const exportVault = () => {
+    const accepted = window.confirm('Exported vault files are plaintext. Store them securely.');
+    if (!accepted) return;
+
     const blob = new Blob([JSON.stringify(userState.aliasHistory, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
@@ -153,7 +147,7 @@ const App: React.FC = () => {
       detail: 'All local vault aliases were removed from this browser.',
       severity: 'Critical',
     });
-    setUserState(prev => ({ ...prev, auditEvents }));
+    setUserState((prev) => ({ ...prev, auditEvents }));
     setGeneratedAlias(null);
     setRiskReport(emptyReport);
   };
@@ -163,13 +157,13 @@ const App: React.FC = () => {
 
     const profile = userState.customer
       ? accountService.saveProfile({
-        ...userState.customer,
-        email: accountEmail.trim().toLowerCase(),
-        displayName: accountName.trim() || userState.customer.displayName,
-      })
+          ...userState.customer,
+          email: accountEmail.trim().toLowerCase(),
+          displayName: accountName.trim() || userState.customer.displayName,
+        })
       : accountService.createProfile(accountEmail, accountName);
 
-    setUserState(prev => ({
+    setUserState((prev) => ({
       ...prev,
       customer: profile,
       auditEvents: accountService.loadAuditEvents(),
@@ -179,7 +173,7 @@ const App: React.FC = () => {
   const handleVerifyEmail = () => {
     if (!userState.customer) return;
     const profile = accountService.verifyEmail(userState.customer);
-    setUserState(prev => ({
+    setUserState((prev) => ({
       ...prev,
       customer: profile,
       auditEvents: accountService.loadAuditEvents(),
@@ -189,7 +183,7 @@ const App: React.FC = () => {
   const handlePlanChange = (plan: SubscriptionPlan) => {
     if (!userState.customer) return;
     const profile = accountService.updatePlan(userState.customer, plan);
-    setUserState(prev => ({
+    setUserState((prev) => ({
       ...prev,
       customer: profile,
       auditEvents: accountService.loadAuditEvents(),
@@ -198,7 +192,7 @@ const App: React.FC = () => {
 
   const handleSyncConfigure = () => {
     const nextSyncState = syncService.configure(syncEndpoint);
-    setUserState(prev => ({ ...prev, syncState: nextSyncState }));
+    setUserState((prev) => ({ ...prev, syncState: nextSyncState }));
   };
 
   const handleSyncCheck = () => {
@@ -208,12 +202,12 @@ const App: React.FC = () => {
       detail: nextSyncState.message,
       severity: 'Info',
     });
-    setUserState(prev => ({ ...prev, syncState: nextSyncState, auditEvents }));
+    setUserState((prev) => ({ ...prev, syncState: nextSyncState, auditEvents }));
   };
 
   const isFormComplete = inputContext && inputName && inputDOB && inputAddress;
 
-  const NavItem = ({ view, icon, label }: { view: AppView; icon: React.ReactNode; label: string }) => (
+  const renderNavItem = (view: AppView, icon: React.ReactNode, label: string) => (
     <button
       className={`nav-item ${currentView === view ? 'active' : ''}`}
       onClick={() => setCurrentView(view)}
@@ -234,21 +228,24 @@ const App: React.FC = () => {
           <p className="eyebrow">Local-first privacy tool</p>
           <h1>IdentityGuard</h1>
           <p className="auth-copy">
-            Create one-use digital aliases and store them in an encrypted browser vault.
-            No identity record is sent to a server in default mode.
+            Create one-use digital aliases and store them in an encrypted browser vault. No identity record is
+            sent to a server in default mode.
           </p>
-          <label className="field-label" htmlFor="passphrase">Vault passphrase</label>
+          <label className="field-label" htmlFor="passphrase">
+            Vault passphrase
+          </label>
           <input
             id="passphrase"
             type="password"
             value={passphrase}
-            onChange={event => setPassphrase(event.target.value)}
-            onKeyDown={event => {
+            onChange={(event) => setPassphrase(event.target.value)}
+            onKeyDown={(event) => {
               if (event.key === 'Enter') handleUnlock();
             }}
-            placeholder="Minimum 8 characters"
+            placeholder="Minimum 12 characters"
             autoComplete="current-password"
           />
+          <p className="fine-print">{PASSPHRASE_GUIDANCE}</p>
           {unlockError && <p className="error-text">{unlockError}</p>}
           <button className="primary-action" onClick={handleUnlock} type="button">
             <ICONS.Lock /> Unlock local vault
@@ -265,20 +262,22 @@ const App: React.FC = () => {
     <div className="app-shell">
       <aside className="sidebar">
         <div className="sidebar-brand">
-          <span className="brand-badge"><ICONS.Shield /></span>
+          <span className="brand-badge">
+            <ICONS.Shield />
+          </span>
           <div>
             <strong>IdentityGuard</strong>
             <small>Encrypted alias vault</small>
           </div>
         </div>
         <nav className="nav-list" aria-label="Primary">
-          <NavItem view={AppView.DASHBOARD} icon={<ICONS.Shield />} label="Dashboard" />
-          <NavItem view={AppView.GENERATE} icon={<ICONS.Sparkles />} label="Generate" />
-          <NavItem view={AppView.VAULT} icon={<ICONS.History />} label="Vault" />
-          <NavItem view={AppView.AI_TOOLS} icon={<ICONS.Globe />} label="Risk" />
-          <NavItem view={AppView.ACCOUNT} icon={<ICONS.User />} label="Account" />
-          <NavItem view={AppView.SYNC} icon={<ICONS.Cloud />} label="Sync" />
-          <NavItem view={AppView.BILLING} icon={<ICONS.CreditCard />} label="Billing" />
+          {renderNavItem(AppView.DASHBOARD, <ICONS.Shield />, 'Dashboard')}
+          {renderNavItem(AppView.GENERATE, <ICONS.Sparkles />, 'Generate')}
+          {renderNavItem(AppView.VAULT, <ICONS.History />, 'Vault')}
+          {renderNavItem(AppView.AI_TOOLS, <ICONS.Globe />, 'Risk')}
+          {renderNavItem(AppView.ACCOUNT, <ICONS.User />, 'Account')}
+          {renderNavItem(AppView.SYNC, <ICONS.Cloud />, 'Sync')}
+          {renderNavItem(AppView.BILLING, <ICONS.CreditCard />, 'Billing')}
         </nav>
         <div className="sidebar-note">
           <span>Vault key</span>
@@ -306,7 +305,8 @@ const App: React.FC = () => {
                 <p className="eyebrow">Current posture</p>
                 <h3>{activeAliases} active aliases</h3>
                 <p>
-                  Each alias is generated locally, stored encrypted, and intended for one service context only.
+                  Each alias is generated locally, stored encrypted, and intended for one service context
+                  only.
                 </p>
               </div>
               <div className="hero-meter" aria-label={`Risk score ${averageRisk}`}>
@@ -356,22 +356,40 @@ const App: React.FC = () => {
               <div className="form-grid">
                 <label>
                   Service context
-                  <input value={inputContext} onChange={event => setInputContext(event.target.value)} placeholder="Business banking, crypto exchange, vendor onboarding" />
+                  <input
+                    value={inputContext}
+                    onChange={(event) => setInputContext(event.target.value)}
+                    placeholder="Business banking, crypto exchange, vendor onboarding"
+                  />
                 </label>
                 <label>
                   Full legal name
-                  <input value={inputName} onChange={event => setInputName(event.target.value)} placeholder="Name used for the identity workflow" />
+                  <input
+                    value={inputName}
+                    onChange={(event) => setInputName(event.target.value)}
+                    placeholder="Name used for the identity workflow"
+                  />
                 </label>
                 <label>
                   Date of birth
-                  <input type="date" value={inputDOB} onChange={event => setInputDOB(event.target.value)} />
+                  <input type="date" value={inputDOB} onChange={(event) => setInputDOB(event.target.value)} />
                 </label>
                 <label>
                   Residential address
-                  <textarea value={inputAddress} onChange={event => setInputAddress(event.target.value)} rows={3} placeholder="Address used for this identity workflow" />
+                  <textarea
+                    value={inputAddress}
+                    onChange={(event) => setInputAddress(event.target.value)}
+                    rows={3}
+                    placeholder="Address used for this identity workflow"
+                  />
                 </label>
               </div>
-              <button className="primary-action wide" disabled={!isFormComplete || isGenerating} onClick={handleGenerate} type="button">
+              <button
+                className="primary-action wide"
+                disabled={!isFormComplete || isGenerating}
+                onClick={handleGenerate}
+                type="button"
+              >
                 <ICONS.Sparkles /> {isGenerating ? 'Generating locally...' : 'Generate secure alias'}
               </button>
             </article>
@@ -382,17 +400,32 @@ const App: React.FC = () => {
                 <>
                   <code className="alias-output">{generatedAlias.hash}</code>
                   <div className="result-actions">
-                    <button onClick={() => copyAlias(generatedAlias)} type="button"><ICONS.Copy /> {copiedId === generatedAlias.id ? 'Copied' : 'Copy'}</button>
-                    <button onClick={() => revokeAlias(generatedAlias.id)} type="button"><ICONS.Trash /> Revoke</button>
+                    <button onClick={() => copyAlias(generatedAlias)} type="button">
+                      <ICONS.Copy /> {copiedId === generatedAlias.id ? 'Copied' : 'Copy'}
+                    </button>
+                    <button onClick={() => revokeAlias(generatedAlias.id)} type="button">
+                      <ICONS.Trash /> Revoke
+                    </button>
                   </div>
                   <dl className="detail-list">
-                    <div><dt>Fingerprint</dt><dd>{generatedAlias.fingerprint}</dd></div>
-                    <div><dt>Context</dt><dd>{generatedAlias.context}</dd></div>
-                    <div><dt>Created</dt><dd>{new Date(generatedAlias.timestamp).toLocaleString()}</dd></div>
+                    <div>
+                      <dt>Fingerprint</dt>
+                      <dd>{generatedAlias.fingerprint}</dd>
+                    </div>
+                    <div>
+                      <dt>Context</dt>
+                      <dd>{generatedAlias.context}</dd>
+                    </div>
+                    <div>
+                      <dt>Created</dt>
+                      <dd>{new Date(generatedAlias.timestamp).toLocaleString()}</dd>
+                    </div>
                   </dl>
                 </>
               ) : (
-                <p className="empty-state">Generated aliases will appear here with copy, revoke, and export controls.</p>
+                <p className="empty-state">
+                  Generated aliases will appear here with copy, revoke, and export controls.
+                </p>
               )}
             </article>
           </section>
@@ -406,22 +439,35 @@ const App: React.FC = () => {
                 <h3>{userState.aliasHistory.length} stored aliases</h3>
               </div>
               <div className="button-row">
-                <button onClick={exportVault} disabled={userState.aliasHistory.length === 0} type="button"><ICONS.Download /> Export</button>
-                <button onClick={clearVault} disabled={userState.aliasHistory.length === 0} type="button"><ICONS.Trash /> Clear</button>
+                <button onClick={exportVault} disabled={userState.aliasHistory.length === 0} type="button">
+                  <ICONS.Download /> Export
+                </button>
+                <button onClick={clearVault} disabled={userState.aliasHistory.length === 0} type="button">
+                  <ICONS.Trash /> Clear
+                </button>
               </div>
             </div>
+            <p className="warning-note">Exported vault files are plaintext. Store them securely.</p>
             <div className="vault-list">
               {userState.aliasHistory.length === 0 && <p className="empty-state">The vault is empty.</p>}
-              {userState.aliasHistory.map(alias => (
+              {userState.aliasHistory.map((alias) => (
                 <article className={`vault-item ${alias.isRevoked ? 'revoked' : ''}`} key={alias.id}>
                   <div>
                     <strong>{alias.context}</strong>
                     <code>{alias.hash}</code>
-                    <small>{alias.fingerprint} | {new Date(alias.timestamp).toLocaleDateString()}</small>
+                    <small>
+                      {alias.fingerprint} | {new Date(alias.timestamp).toLocaleDateString()}
+                    </small>
                   </div>
                   <div className="button-row">
-                    <button onClick={() => copyAlias(alias)} type="button"><ICONS.Copy /> {copiedId === alias.id ? 'Copied' : 'Copy'}</button>
-                    {!alias.isRevoked && <button onClick={() => revokeAlias(alias.id)} type="button"><ICONS.Trash /> Revoke</button>}
+                    <button onClick={() => copyAlias(alias)} type="button">
+                      <ICONS.Copy /> {copiedId === alias.id ? 'Copied' : 'Copy'}
+                    </button>
+                    {!alias.isRevoked && (
+                      <button onClick={() => revokeAlias(alias.id)} type="button">
+                        <ICONS.Trash /> Revoke
+                      </button>
+                    )}
                   </div>
                 </article>
               ))}
@@ -439,18 +485,23 @@ const App: React.FC = () => {
                 <small>Local risk score</small>
               </div>
               <p>
-                Optional AI can be connected through a private backend endpoint, but the default open-source build uses local deterministic analysis only.
+                Optional AI can be connected through a private backend endpoint, but the default open-source
+                build uses local deterministic analysis only.
               </p>
             </article>
             <article className="panel">
               <p className="eyebrow">Findings</p>
               <div className="finding-list">
-                {riskReport.findings.length === 0 && <p className="empty-state">Generate an alias to create a risk briefing.</p>}
-                {riskReport.findings.map(finding => (
+                {riskReport.findings.length === 0 && (
+                  <p className="empty-state">Generate an alias to create a risk briefing.</p>
+                )}
+                {riskReport.findings.map((finding) => (
                   <div className="finding" key={finding.label}>
                     <span className={`risk-dot ${finding.level.toLowerCase()}`} />
                     <div>
-                      <strong>{finding.label} ({finding.level})</strong>
+                      <strong>
+                        {finding.label} ({finding.level})
+                      </strong>
                       <p>{finding.detail}</p>
                     </div>
                   </div>
@@ -458,7 +509,9 @@ const App: React.FC = () => {
               </div>
               {riskReport.recommendations.length > 0 && (
                 <ul className="recommendations">
-                  {riskReport.recommendations.map(item => <li key={item}>{item}</li>)}
+                  {riskReport.recommendations.map((item) => (
+                    <li key={item}>{item}</li>
+                  ))}
                 </ul>
               )}
             </article>
@@ -471,23 +524,42 @@ const App: React.FC = () => {
               <p className="eyebrow">SaaS account</p>
               <h3>Prepare a customer profile for hosted IdentityGuard.</h3>
               <p>
-                Use a test email during development. This local profile validates onboarding flow without exposing private vault content.
+                Use a test email during development. This local profile validates onboarding flow without
+                exposing private vault content.
               </p>
               <div className="form-grid">
                 <label>
                   Email address
-                  <input value={accountEmail} onChange={event => setAccountEmail(event.target.value)} placeholder="tester@example.com" type="email" />
+                  <input
+                    value={accountEmail}
+                    onChange={(event) => setAccountEmail(event.target.value)}
+                    placeholder="tester@example.com"
+                    type="email"
+                  />
                 </label>
                 <label>
                   Display name
-                  <input value={accountName} onChange={event => setAccountName(event.target.value)} placeholder="IdentityGuard tester" />
+                  <input
+                    value={accountName}
+                    onChange={(event) => setAccountName(event.target.value)}
+                    placeholder="IdentityGuard tester"
+                  />
                 </label>
               </div>
               <div className="button-row">
-                <button className="primary-inline" onClick={handleAccountSave} disabled={!accountEmail.trim()} type="button">
+                <button
+                  className="primary-inline"
+                  onClick={handleAccountSave}
+                  disabled={!accountEmail.trim()}
+                  type="button"
+                >
                   <ICONS.User /> Save test account
                 </button>
-                <button onClick={handleVerifyEmail} disabled={!userState.customer || userState.customer.emailVerified} type="button">
+                <button
+                  onClick={handleVerifyEmail}
+                  disabled={!userState.customer || userState.customer.emailVerified}
+                  type="button"
+                >
                   <ICONS.Check /> Mark email verified
                 </button>
               </div>
@@ -497,11 +569,26 @@ const App: React.FC = () => {
               <p className="eyebrow">Account status</p>
               {userState.customer ? (
                 <dl className="detail-list">
-                  <div><dt>Email</dt><dd>{userState.customer.email}</dd></div>
-                  <div><dt>Name</dt><dd>{userState.customer.displayName}</dd></div>
-                  <div><dt>Plan</dt><dd>{userState.customer.plan}</dd></div>
-                  <div><dt>Email status</dt><dd>{userState.customer.emailVerified ? 'Verified' : 'Pending test verification'}</dd></div>
-                  <div><dt>Created</dt><dd>{new Date(userState.customer.createdAt).toLocaleString()}</dd></div>
+                  <div>
+                    <dt>Email</dt>
+                    <dd>{userState.customer.email}</dd>
+                  </div>
+                  <div>
+                    <dt>Name</dt>
+                    <dd>{userState.customer.displayName}</dd>
+                  </div>
+                  <div>
+                    <dt>Plan</dt>
+                    <dd>{userState.customer.plan}</dd>
+                  </div>
+                  <div>
+                    <dt>Email status</dt>
+                    <dd>{userState.customer.emailVerified ? 'Verified' : 'Pending test verification'}</dd>
+                  </div>
+                  <div>
+                    <dt>Created</dt>
+                    <dd>{new Date(userState.customer.createdAt).toLocaleString()}</dd>
+                  </div>
                 </dl>
               ) : (
                 <p className="empty-state">No SaaS test account has been created on this browser.</p>
@@ -516,12 +603,17 @@ const App: React.FC = () => {
               <p className="eyebrow">Encrypted sync</p>
               <h3>Configure a private backend endpoint.</h3>
               <p>
-                The frontend only stores endpoint readiness. A production backend must accept encrypted vault blobs and must never require raw identity fields.
+                The frontend only stores endpoint readiness. A production backend must accept encrypted vault
+                blobs and must never require raw identity fields.
               </p>
               <div className="form-grid">
                 <label>
                   Sync endpoint
-                  <input value={syncEndpoint} onChange={event => setSyncEndpoint(event.target.value)} placeholder="https://api.example.com/v1/sync" />
+                  <input
+                    value={syncEndpoint}
+                    onChange={(event) => setSyncEndpoint(event.target.value)}
+                    placeholder="https://api.example.com/v1/sync"
+                  />
                 </label>
               </div>
               <div className="button-row">
@@ -541,10 +633,26 @@ const App: React.FC = () => {
                 <small>Pending</small>
               </div>
               <dl className="detail-list">
-                <div><dt>Status</dt><dd>{userState.syncState.status}</dd></div>
-                <div><dt>Endpoint</dt><dd>{userState.syncState.endpoint || 'Not configured'}</dd></div>
-                <div><dt>Last check</dt><dd>{userState.syncState.lastSyncAt ? new Date(userState.syncState.lastSyncAt).toLocaleString() : 'Not checked'}</dd></div>
-                <div><dt>Message</dt><dd>{userState.syncState.message}</dd></div>
+                <div>
+                  <dt>Status</dt>
+                  <dd>{userState.syncState.status}</dd>
+                </div>
+                <div>
+                  <dt>Endpoint</dt>
+                  <dd>{userState.syncState.endpoint || 'Not configured'}</dd>
+                </div>
+                <div>
+                  <dt>Last check</dt>
+                  <dd>
+                    {userState.syncState.lastSyncAt
+                      ? new Date(userState.syncState.lastSyncAt).toLocaleString()
+                      : 'Not checked'}
+                  </dd>
+                </div>
+                <div>
+                  <dt>Message</dt>
+                  <dd>{userState.syncState.message}</dd>
+                </div>
               </dl>
             </article>
           </section>
@@ -556,10 +664,11 @@ const App: React.FC = () => {
               <p className="eyebrow">Commercial plans</p>
               <h3>Validate SaaS packaging before connecting payments.</h3>
               <p>
-                Plan selection is local-only in this build. Connect Stripe, Paddle, or Lemon Squeezy in the backend before collecting money.
+                Plan selection is local-only in this build. Connect Stripe, Paddle, or Lemon Squeezy in the
+                backend before collecting money.
               </p>
               <div className="plan-grid">
-                {(['Free', 'Pro', 'Team'] as SubscriptionPlan[]).map(plan => (
+                {(['Free', 'Pro', 'Team'] as SubscriptionPlan[]).map((plan) => (
                   <button
                     className={`plan-card ${userState.customer?.plan === plan ? 'selected' : ''}`}
                     disabled={!userState.customer}
@@ -584,12 +693,16 @@ const App: React.FC = () => {
             <article className="panel">
               <p className="eyebrow">Audit trail</p>
               <div className="audit-list">
-                {userState.auditEvents.length === 0 && <p className="empty-state">Account and vault events will appear here.</p>}
-                {userState.auditEvents.map(event => (
+                {userState.auditEvents.length === 0 && (
+                  <p className="empty-state">Account and vault events will appear here.</p>
+                )}
+                {userState.auditEvents.map((event) => (
                   <article className={`audit-item ${event.severity.toLowerCase()}`} key={event.id}>
                     <strong>{event.action}</strong>
                     <p>{event.detail}</p>
-                    <small>{new Date(event.timestamp).toLocaleString()} | {event.severity}</small>
+                    <small>
+                      {new Date(event.timestamp).toLocaleString()} | {event.severity}
+                    </small>
                   </article>
                 ))}
               </div>

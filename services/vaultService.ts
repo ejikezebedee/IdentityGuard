@@ -2,12 +2,15 @@ import { Alias, VaultSession } from '../types';
 
 const STORAGE_KEY = 'identityguard.encryptedVault.v1';
 const SALT_KEY = 'identityguard.vaultSalt.v1';
+export const MIN_PASSPHRASE_LENGTH = 12;
+export const PASSPHRASE_GUIDANCE =
+  'Use at least 12 characters. Prefer a long memorable phrase with uncommon words, numbers, and punctuation. Weak passphrases reduce vault safety.';
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 
 const bytesToBase64 = (bytes: Uint8Array): string => {
   let binary = '';
-  bytes.forEach(byte => {
+  bytes.forEach((byte) => {
     binary += String.fromCharCode(byte);
   });
   return btoa(binary);
@@ -15,7 +18,7 @@ const bytesToBase64 = (bytes: Uint8Array): string => {
 
 const base64ToBytes = (value: string): Uint8Array => {
   const binary = atob(value);
-  return Uint8Array.from(binary, char => char.charCodeAt(0));
+  return Uint8Array.from(binary, (char) => char.charCodeAt(0));
 };
 
 const getSalt = (): Uint8Array => {
@@ -29,17 +32,13 @@ const getSalt = (): Uint8Array => {
 
 export const vaultService = {
   async unlock(passphrase: string): Promise<VaultSession> {
-    if (passphrase.trim().length < 8) {
-      throw new Error('Use at least 8 characters for the vault passphrase.');
+    if (passphrase.trim().length < MIN_PASSPHRASE_LENGTH) {
+      throw new Error(`Use at least ${MIN_PASSPHRASE_LENGTH} characters for the vault passphrase.`);
     }
 
-    const baseKey = await crypto.subtle.importKey(
-      'raw',
-      encoder.encode(passphrase),
-      'PBKDF2',
-      false,
-      ['deriveKey']
-    );
+    const baseKey = await crypto.subtle.importKey('raw', encoder.encode(passphrase), 'PBKDF2', false, [
+      'deriveKey',
+    ]);
 
     const key = await crypto.subtle.deriveKey(
       {
